@@ -3,7 +3,6 @@ package com.github.lhsm.aspect.cache;
 import com.github.lhsm.aspect.cache.key.ICacheKey;
 import com.github.lhsm.aspect.cache.key.KeyGenerator;
 import com.github.lhsm.cache.jmx.GuavaCacheMXBean;
-import com.google.common.base.Optional;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheBuilderSpec;
@@ -33,7 +32,7 @@ public abstract class ACacheAspect {
 
     private final static Logger LOGGER = LoggerFactory.getLogger(ACacheAspect.class);
 
-    private final ConcurrentHashMap<String, LoadingCache<ICacheKey, Optional<Object>>> caches = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, LoadingCache<ICacheKey, Object>> caches = new ConcurrentHashMap<>();
 
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
@@ -58,19 +57,19 @@ public abstract class ACacheAspect {
         return executor;
     }
 
-    protected static void registerBean(String cacheName, Cache<ICacheKey, Optional<Object>> cache) {
+    protected static void registerBean(String cacheName, Cache<ICacheKey, Object> cache) {
         new GuavaCacheMXBean(cacheName, cache);
     }
 
     protected Object getCachedResult(final CacheResult methodAnnotation, final ProceedingJoinPoint joinPoint) throws Throwable {
         String cacheName = methodAnnotation.cacheName();
 
-        LoadingCache<ICacheKey, Optional<Object>> cache = getCache(cacheName, joinPoint);
+        LoadingCache<ICacheKey, Object> cache = getCache(cacheName, joinPoint);
 
         ICacheKey key = KeyGenerator.generate(joinPoint.getArgs());
 
         try {
-            Object value = cache.getUnchecked(key).orNull();
+            Object value = cache.getUnchecked(key);
             LOGGER.trace("Got for key {} value {}", new Object[]{cacheName, key, value});
 
             return value;
@@ -106,18 +105,18 @@ public abstract class ACacheAspect {
         String cacheName = methodAnnotation.cacheName();
         ICacheKey key = KeyGenerator.generate(joinPoint.getArgs());
 
-        Cache<ICacheKey, Optional<Object>> cache = getCache(cacheName, joinPoint);
+        Cache<ICacheKey, Object> cache = getCache(cacheName, joinPoint);
 
         Object value = joinPoint.proceed(key.getParameters());
 
-        cache.put(key, Optional.fromNullable(value));
+        cache.put(key, value);
 
         LOGGER.debug("Cache {} updated for key {} with value {}", new Object[]{cacheName, key, value});
 
         return value;
     }
 
-    protected LoadingCache<ICacheKey, Optional<Object>> getCache(final String cacheName, final ProceedingJoinPoint joinPoint) {
+    private LoadingCache<ICacheKey, Object> getCache(final String cacheName, final ProceedingJoinPoint joinPoint) {
         if (caches.containsKey(cacheName)) {
             return caches.get(cacheName);
         }
@@ -131,15 +130,15 @@ public abstract class ACacheAspect {
         return null;
     }
 
-    private LoadingCache<ICacheKey, Optional<Object>> buildCache(String cacheName, final ProceedingJoinPoint joinPoint) {
+    private LoadingCache<ICacheKey, Object> buildCache(String cacheName, final ProceedingJoinPoint joinPoint) {
         try {
-            CacheLoader<ICacheKey, Optional<Object>> loader = new CacheLoader<ICacheKey, Optional<Object>>() {
-                public Optional<Object> load(ICacheKey key) throws Exception {
+            CacheLoader<ICacheKey, Object> loader = new CacheLoader<ICacheKey, Object>() {
+                public Object load(ICacheKey key) throws Exception {
                     try {
                         Object value = joinPoint.proceed(key.getParameters());
 
                         LOGGER.debug("Cache {} loaded for key {} value {}", new Object[]{cacheName, key, value});
-                        return Optional.fromNullable(value);
+                        return value;
                     } catch (Exception e) {
                         LOGGER.warn("Cache {} could not load value for key {} {}", new Object[]{cacheName, key, e});
                         throw e;
@@ -149,8 +148,8 @@ public abstract class ACacheAspect {
                     }
                 }
 
-                public ListenableFuture<Optional<Object>> reload(final ICacheKey key, final Optional<Object> prevValue) {
-                    ListenableFutureTask<Optional<Object>> task = ListenableFutureTask
+                public ListenableFuture<Object> reload(final ICacheKey key, final Object prevValue) {
+                    ListenableFutureTask<Object> task = ListenableFutureTask
                             .create(() -> {
                                 try {
                                     Object value = joinPoint.proceed(key.getParameters());
@@ -159,7 +158,7 @@ public abstract class ACacheAspect {
                                             "Cache {} asynchronously reload for key {} value {}",
                                             new Object[]{cacheName, key, value}
                                     );
-                                    return Optional.fromNullable(value);
+                                    return value;
                                 } catch (Throwable t) {
                                     LOGGER.warn(
                                             "Cache {} could not asynchronously reload value for {} {}",
@@ -177,7 +176,7 @@ public abstract class ACacheAspect {
 
             CacheBuilderSpec spec = getCacheSpec(cacheName);
 
-            LoadingCache<ICacheKey, Optional<Object>> cache = CacheBuilder.from(spec).recordStats().build(loader);
+            LoadingCache<ICacheKey, Object> cache = CacheBuilder.from(spec).recordStats().build(loader);
 
             registerBean(cacheName, cache);
 
