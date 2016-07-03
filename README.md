@@ -1,0 +1,1 @@
+Cache based on JSR-107 annotation and AspectJ
