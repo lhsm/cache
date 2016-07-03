@@ -14,8 +14,6 @@ import com.google.common.util.concurrent.ListenableFutureTask;
 import com.google.common.util.concurrent.UncheckedExecutionException;
 import org.aspectj.lang.JoinPoint;
 import org.aspectj.lang.ProceedingJoinPoint;
-import org.aspectj.runtime.internal.AroundClosure;
-import org.aspectj.runtime.reflect.Factory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,9 +22,6 @@ import javax.cache.annotation.CachePut;
 import javax.cache.annotation.CacheRemove;
 import javax.cache.annotation.CacheRemoveAll;
 import javax.cache.annotation.CacheResult;
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.util.Arrays;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -138,14 +133,10 @@ public abstract class ACacheAspect {
 
     private LoadingCache<ICacheKey, Optional<Object>> buildCache(String cacheName, final ProceedingJoinPoint joinPoint) {
         try {
-            final AroundClosure aroundClosure = getAroundClosure(joinPoint);
-
             CacheLoader<ICacheKey, Optional<Object>> loader = new CacheLoader<ICacheKey, Optional<Object>>() {
                 public Optional<Object> load(ICacheKey key) throws Exception {
                     try {
-                        // TODO Убрать фикс после исправления дефекта в библиотеке aspectjrt
-                        Object value = copyProceedingJoinPoint(joinPoint, aroundClosure).proceed(
-                                key.getParameters());
+                        Object value = joinPoint.proceed(key.getParameters());
 
                         LOGGER.debug("Cache {} loaded for key {} value {}", new Object[]{cacheName, key, value});
                         return Optional.fromNullable(value);
@@ -162,9 +153,7 @@ public abstract class ACacheAspect {
                     ListenableFutureTask<Optional<Object>> task = ListenableFutureTask
                             .create(() -> {
                                 try {
-                                    // TODO Убрать фикс после исправления дефекта в библиотеке aspectjrt
-                                    Object value = copyProceedingJoinPoint(joinPoint, aroundClosure).proceed(
-                                            key.getParameters());
+                                    Object value = joinPoint.proceed(key.getParameters());
 
                                     LOGGER.debug(
                                             "Cache {} asynchronously reload for key {} value {}",
@@ -200,70 +189,6 @@ public abstract class ACacheAspect {
         }
 
         return null;
-    }
-
-    /**
-     * Копирует join point для поддержки многопоточности. Подробнее MOBAPP-334. Убрать фикс после исправления дефекта в
-     * библиотеке aspectjrt
-     *
-     * @param joinPoint
-     * @param aroundClosure
-     * @return копию join point
-     * @throws InstantiationException
-     * @throws IllegalAccessException
-     * @throws IllegalArgumentException
-     * @throws InvocationTargetException
-     * @throws NoSuchMethodException
-     * @throws SecurityException
-     * @deprecated
-     */
-    @Deprecated
-    private static ProceedingJoinPoint copyProceedingJoinPoint(ProceedingJoinPoint joinPoint, AroundClosure aroundClosure)
-            throws InstantiationException, IllegalAccessException, IllegalArgumentException, InvocationTargetException, NoSuchMethodException, SecurityException {
-        AroundClosure arc = aroundClosure.getClass().getConstructor(Object[].class)
-                .newInstance((Object) updateState(aroundClosure.getState(), joinPoint));
-
-        return arc.linkClosureAndJoinPoint(aroundClosure.getFlags());
-    }
-
-    /**
-     * Получает around closure из join point через рефлексию
-     *
-     * @param joinPoint
-     * @return around closure заданного join point
-     * @throws NoSuchFieldException
-     * @throws SecurityException
-     * @throws IllegalArgumentException
-     * @throws IllegalAccessException
-     * @deprecated
-     */
-    @Deprecated
-    private static AroundClosure getAroundClosure(ProceedingJoinPoint joinPoint) throws NoSuchFieldException,
-            SecurityException, IllegalArgumentException, IllegalAccessException {
-        Field privateField = joinPoint.getClass().getDeclaredField("arc");
-        privateField.setAccessible(true);
-        return (AroundClosure) privateField.get(joinPoint);
-    }
-
-    /**
-     * Обновляет join point в списке состояний
-     *
-     * @param state
-     * @param joinPoint
-     * @return обновленый список состояний
-     * @see AroundClosure#linkClosureAndJoinPoint(int)
-     * @deprecated
-     */
-    @Deprecated
-    private static Object[] updateState(Object[] state, ProceedingJoinPoint joinPoint) {
-        Object[] newState = Arrays.copyOf(state, state.length);
-        for (int i = 0; i < newState.length; i++) {
-            if (newState[i] instanceof ProceedingJoinPoint) {
-                newState[i] = Factory.makeJP(joinPoint.getStaticPart(), joinPoint.getThis(),
-                        joinPoint.getTarget(), joinPoint.getArgs());
-            }
-        }
-        return newState;
     }
 
 }
